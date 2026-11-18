@@ -20,6 +20,15 @@ const (
 	ReasonPodsMatchBothSides = "PodsMatchBothSides"
 	// ReasonCiliumNotInstalled means the cluster does not serve the Cilium policy API.
 	ReasonCiliumNotInstalled = "CiliumNotInstalled"
+	// ReasonNamespaceProtected means no policy was created because a side covers
+	// a namespace the tool must never act on.
+	ReasonNamespaceProtected = "NamespaceProtected"
+	// ReasonPolicyConflict means a policy with the expected name exists but is
+	// not owned by this Isolation, so the controller leaves it alone.
+	ReasonPolicyConflict = "PolicyConflict"
+	// ReasonPolicyApplyFailed means the API server rejected the policy write. The
+	// write is retried, and the state of the policy is unknown until it succeeds.
+	ReasonPolicyApplyFailed = "PolicyApplyFailed"
 )
 
 // NamespaceName is the name of a namespace (an RFC 1123 label).
@@ -164,7 +173,7 @@ type IsolationStatus struct {
 
 	// matchedPods counts the pods currently selected by each side.
 	// +optional
-	MatchedPods MatchedPods `json:"matchedPods,omitzero"`
+	MatchedPods MatchedPods `json:"matchedPods"`
 
 	// warnings lists problems that do not prevent enforcement, such as a side
 	// matching no pods.
