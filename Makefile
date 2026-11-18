@@ -1,5 +1,12 @@
+CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.23.0
+
 CLUSTER ?= sre-lab
 CILIUM_VERSION ?= 1.17.6 # enableDefaultDeny needs at least 1.15
+
+.PHONY: generate
+generate: ## Generate the deepcopy code and the CRD manifest from the API types.
+	$(CONTROLLER_GEN) object paths=./api/...
+	$(CONTROLLER_GEN) crd paths=./api/... output:crd:dir=deploy/crd
 
 .PHONY: lab-up
 lab-up:
