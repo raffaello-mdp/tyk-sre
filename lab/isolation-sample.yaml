@@ -1,0 +1,17 @@
+# Isolates tenant-a/gateway from tenant-b/dashboard (see workloads/isolation.yaml).
+#   On:  kubectl apply -f lab/isolation-sample.yaml
+#   Off: kubectl delete -f lab/isolation-sample.yaml
+apiVersion: sre.tyk.io/v1alpha1
+kind: Isolation
+metadata:
+  name: inc-1234
+spec:
+  reason: "INC-1234 suspected cross-tenant compromise"
+  a:
+    namespaces: [tenant-a]
+    selector:
+      matchLabels: { app: gateway }
+  b:
+    namespaces: [tenant-b]
+    selector:
+      matchLabels: { app: dashboard }

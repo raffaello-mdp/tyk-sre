@@ -1,0 +1,145 @@
+# Sample workloads for the network isolation demo:
+#
+#   tenant-a/gateway       side A; its "client" container opens long-lived connections
+#   tenant-a/not-isolated  bystander in A's namespace, must stay connected to B
+#   tenant-b/dashboard     side B; its "sink" container receives on :9000
+#   tenant-b/not-isolated  bystander in B's namespace, must stay connected to A
+#   shared/echo            a service both sides keep using during an isolation
+#
+# The NetworkPolicy in tenant-b exists before any isolation, to prove that turning
+# isolation off restores the previous connectivity and not "allow everything".
+apiVersion: v1
+kind: Namespace
+metadata: { name: tenant-a }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: tenant-b }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: shared }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: gateway, namespace: tenant-a }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: gateway } }
+  template:
+    metadata: { labels: { app: gateway } }
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["netexec", "--http-port=8080"]
+          ports: [{ containerPort: 8080 }]
+        - name: client
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep infinity"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: not-isolated, namespace: tenant-a }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: not-isolated } }
+  template:
+    metadata: { labels: { app: not-isolated } }
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["netexec", "--http-port=8080"]
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: dashboard, namespace: tenant-b }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: dashboard } }
+  template:
+    metadata: { labels: { app: dashboard } }
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["netexec", "--http-port=8080"]
+          ports: [{ containerPort: 8080 }]
+        - name: sink
+          image: busybox:1.36
+          command: ["sh", "-c", "while true; do nc -l -p 9000 >> /tmp/recv; done"]
+          ports: [{ containerPort: 9000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: not-isolated, namespace: tenant-b }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: not-isolated } }
+  template:
+    metadata: { labels: { app: not-isolated } }
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["netexec", "--http-port=8080"]
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: echo, namespace: shared }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: echo } }
+  template:
+    metadata: { labels: { app: echo } }
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["netexec", "--http-port=8080"]
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: gateway, namespace: tenant-a }
+spec: { selector: { app: gateway }, ports: [{ port: 8080 }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: not-isolated, namespace: tenant-a }
+spec: { selector: { app: not-isolated }, ports: [{ port: 8080 }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: dashboard, namespace: tenant-b }
+spec:
+  selector: { app: dashboard }
+  ports:
+    - { name: http, port: 8080 }
+    - { name: sink, port: 9000 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: not-isolated, namespace: tenant-b }
+spec: { selector: { app: not-isolated }, ports: [{ port: 8080 }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: echo, namespace: shared }
+spec: { selector: { app: echo }, ports: [{ port: 8080 }] }
+---
+# Pre-existing tenant policy: dashboard only accepts traffic from tenant-a and shared,
+# so tenant-b/not-isolated -> dashboard is blocked before, during and after an isolation.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: dashboard-ingress, namespace: tenant-b }
+spec:
+  podSelector: { matchLabels: { app: dashboard } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: tenant-a } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: shared } }
