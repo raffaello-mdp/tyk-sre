@@ -17,6 +17,8 @@ import (
 
 	"github.com/raffaello-mdp/tyk-sre/api/v1alpha1"
 	"github.com/raffaello-mdp/tyk-sre/internal/guard"
+	"github.com/raffaello-mdp/tyk-sre/internal/hardening"
+	"github.com/raffaello-mdp/tyk-sre/internal/httpapi"
 	"github.com/raffaello-mdp/tyk-sre/internal/isolation"
 )
 
@@ -25,6 +27,7 @@ const defaultNamespace = "tyk-sre"
 
 // config holds the command-line settings.
 type config struct {
+	apiAddr         string
 	healthProbeAddr string
 	metricsAddr     string
 	namespace       string
@@ -32,6 +35,7 @@ type config struct {
 
 func main() {
 	cfg := config{}
+	flag.StringVar(&cfg.apiAddr, "api-bind-address", ":8080", "Address serving the hardening API.")
 	flag.StringVar(&cfg.healthProbeAddr, "health-probe-bind-address", ":8081", "Address serving /healthz and /readyz.")
 	flag.StringVar(&cfg.metricsAddr, "metrics-bind-address", "0", `Address serving metrics, "0" disables them.`)
 	flag.StringVar(&cfg.namespace, "namespace", namespaceFromEnv(), "Namespace of the tool, which it never acts on.")
@@ -74,12 +78,24 @@ func run(cfg config) error {
 		return fmt.Errorf("creating manager: %w", err)
 	}
 
+	namespaceGuard := guard.New(cfg.namespace)
+
 	reconciler := &isolation.Reconciler{
 		Client: mgr.GetClient(),
-		Guard:  guard.New(cfg.namespace),
+		Guard:  namespaceGuard,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up the isolation controller: %w", err)
+	}
+
+	hardener := &hardening.Hardener{
+		Reader:   mgr.GetAPIReader(),
+		Writer:   mgr.GetClient(),
+		Guard:    namespaceGuard,
+		Defaults: hardening.DefaultResources(),
+	}
+	if err := mgr.Add(httpapi.NewServer(cfg.apiAddr, hardener)); err != nil {
+		return fmt.Errorf("adding the hardening API: %w", err)
 	}
 
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {

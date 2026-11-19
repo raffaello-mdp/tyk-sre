@@ -1,0 +1,17 @@
+# ClusterIP only: the hardening API restarts workloads, so it is reached through
+# kubectl port-forward, which Kubernetes RBAC controls.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tyk-sre
+  namespace: tyk-sre
+  labels:
+    app.kubernetes.io/name: tyk-sre
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: tyk-sre
+  ports:
+    - name: api
+      port: 8080
+      targetPort: api

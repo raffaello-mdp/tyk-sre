@@ -35,6 +35,8 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           ports:
+            - name: api
+              containerPort: 8080
             - name: health
               containerPort: 8081
           livenessProbe:

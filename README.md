@@ -1,9 +1,9 @@
 # tyk-sre — SRE automations for Kubernetes
 
-> **Status: design phase.** This README currently holds the initial analysis and the decisions taken
+> **Status: in progress.** This README holds the analysis and the decisions taken
 > so far. Build/deploy/run instructions, test notes and limitations will be filled in as while working on the implementation.
 
-A small Go service, deployed in-cluster, that lets an SRE:
+A Go service, deployed in-cluster, that lets an SRE:
 
 1. **Isolate** two workloads from each other on demand (and lift the isolation), without
    affecting any of their other traffic.
@@ -22,7 +22,7 @@ The original brief is in [`docs/`](docs/).
 - **Effect:** block all network traffic between A and B, in both directions.
 - **Unaffected:** all other traffic of both workloads keeps working.
 - **On demand:** isolation can be turned on and off again; turning it off must restore the
-  workloads' *previous* connectivity, not just "allow everything".
+  workloads' previous connectivity, not just "allow everything".
 - **Undo:** *(core)* it is what "off" means.
 
 ### 1.2 Workload hardening
@@ -30,7 +30,7 @@ The original brief is in [`docs/`](docs/).
 - **Input:** one or more namespaces.
 - **Effect:** patch workloads that run without resource requests and limits, or without a hardened
   `securityContext`.
-- **Preview:** a way to see what would change before it changes (dry-run).
+- **Preview:** a way to see what would change before it changes (dryRun).
 - **Safety:** patching must not break the workloads.
 - **Undo:** *(bonus)* if not built, the approach is described in this README.
 
@@ -42,7 +42,7 @@ The original brief is in [`docs/`](docs/).
 - Automated tests, including at least one tricky case, with the reasoning behind it.
 - This README: set-up, build/deploy/run, decisions, and known limitations.
 
-### 1.4 Evaluation focus
+### 1.4 Evaluation focus mentioned in the brief
 
 - Correct behaviour at the edges (especially turning isolation **off**
 and patching **without breaking** workloads);
@@ -134,7 +134,7 @@ are reported through status conditions.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/hardening?dryRun=true` | Return the per-workload changes without applying them |
+| `POST` | `/hardening?dryRun=true` | Return the per-workload changes without applying them (server-side dry run; a bare `?dryRun` also counts as true) |
 | `POST` | `/hardening` | Apply them; returns per-workload results |
 | `GET` | `/healthz`, `/readyz` | Probes |
 
@@ -143,6 +143,21 @@ Example request:
 ```json
 { "namespaces": ["tenant-a", "tenant-b"] }
 ```
+
+The response lists each namespace and workload as `Patched`, `Unchanged`, `Skipped` or `Failed` (namespaces as `Processed`, `Skipped` or `Failed`). The
+status code is `200` once the request has run, even if parts of it failed, because the other
+workloads may have been patched. The top-level `failed` field counts the failures, so a script can
+check `jq -e '.failed == 0'`. Requests that are rejected before anything is attempted get a `4xx`.
+With `dryRun`, the response has `"dryRun": true` and `Patched` means "would be patched": the API
+server accepted the change in a dry run, but `changes` shows the tool's plan, not what the server
+would store after mutation (see "Preview and apply" in section 4).
+Each workload lists the values added under `changes`, and the parts deliberately left alone under
+`notes`.
+
+> **Current state:** `POST /hardening` fills in resource requests and limits and the
+> `securityContext`. The operator opt-in for higher-risk settings described in section 4 is not
+> built yet, and neither is the controlled rollout: every workload is patched immediately (see
+> [section 7](#7-what-to-iterate-with-more-time)).
 
 ### Access control
 
@@ -239,8 +254,7 @@ policy they own: uninstalling the tool would silently end every active containme
 
 ### What "hardened" means
 
-The reference is the **Pod Security Standards `restricted` profile**, an external and widely
-understood baseline rather than a home-grown list:
+The reference is the **Pod Security Standards `restricted` profile** (https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted):
 
 - `allowPrivilegeEscalation: false`
 - `capabilities.drop: [ALL]`
@@ -267,17 +281,54 @@ Approach:
 - **Tiered settings.** Low-risk fields (`allowPrivilegeEscalation`, `seccompProfile`) are applied
   by default. Higher-risk fields are applied only when there is evidence they are safe (e.g. a
   non-zero `runAsUser` is already set) or when the operator opts in explicitly.
-- **Controlled rollout.** Workloads are patched one at a time and the rollout is watched; a rollout
-  that fails to progress is reported (and, with undo, rolled back) before moving on.
+- **Controlled rollout.** *(Not built: every workload is patched immediately. See
+  [section 7](#7-what-to-iterate-with-more-time).)* Workloads are patched one at a time and the
+  rollout is watched; a rollout that fails to progress is reported (and, with undo, rolled back)
+  before moving on.
 - **Bookkeeping on the workload, not the pod template**, so the tool's annotations do not trigger
   extra restarts.
+
+### Security context
+
+Init containers get the same settings as the other containers.
+
+| Setting | Level | Set when missing and… |
+|---|---|---|
+| `seccompProfile: RuntimeDefault` | pod | always |
+| `allowPrivilegeEscalation: false` | container | the container does not add `CAP_SYS_ADMIN` (the API server rejects the combination) |
+| `runAsNonRoot: true` | container | the container runs as a non-zero `runAsUser`, from the container or the pod |
+| `capabilities.drop: [ALL]` | container | same evidence: a non-root process starts with no capabilities and, without privilege escalation, cannot gain any |
+
+- **Why `runAsUser` is the evidence:** the user an image runs as is not visible through the
+  Kubernetes API. Without an explicit non-root user, `runAsNonRoot` would stop root images from
+  starting, and dropping capabilities would break those that bind ports below 1024 or `chown`.
+- **A value set at either level counts as set.** Container settings override pod settings, so
+  `runAsUser: 0` on a container wins over a non-root pod, and `runAsNonRoot: false` on the pod is
+  respected.
+- **An existing `drop` list is left as it is.** The list is replaced as a whole, so `ALL` cannot be
+  added to it without changing what is there.
+- **Privileged containers are left alone,** and reported in `notes`: they are privileged on
+  purpose.
+- **Linux only.** Workloads are assumed to run on Linux nodes; these settings do not apply to
+  Windows pods.
+- **`readOnlyRootFilesystem` is never set:** whether an application writes to its filesystem cannot
+  be told from the spec.
 
 ### Requests and limits
 
 - Set CPU/memory **requests** and a **memory limit** where missing.
 - **No CPU limit by default**: CPU limits cause throttling.
+- **Defaults:** CPU request `50m`, memory request `128Mi`, memory limit `512Mi`.
+- **A limit without a request is left alone.** Kubernetes already uses the limit as the request, and
+  adding a lower one would demote a Guaranteed pod to Burstable.
+- **The memory limit is never below the request.** A request above the default limit raises the
+  limit to match, since the API server rejects a limit below the request.
+- **Pod-level resources:** containers of pods setting `spec.resources` get no resource defaults,
+  because they could exceed the pod's budget.
+- **Earlier values survive later runs.** Server-Side Apply removes owned fields missing from a
+  request, so each request starts from the fields the tool already owns.
 - Defaults are configurable. Existing `LimitRange`s in the namespace are reported, since they can
-  inject values at admission time.
+  inject values at admission time. *(Neither is built yet.)*
 
 ### Scope
 
@@ -288,9 +339,14 @@ Approach:
 ### Preview and apply
 
 Changes are applied with **Server-Side Apply** under the tool's own field manager. The preview uses
-the same request with **server-side dry-run**, so the diff reflects what the API server would really
-persist, including defaulting and admission. The response lists, per workload and container, each
-field that would be set and its new value.
+the same request with **server-side dry-run**. The response lists, per workload and container, each
+field the tool would set and its new value.
+
+That list comes from the tool's own plan, not from the dry-run response. The dry run makes the API
+server validate the change and run it through admission, so a change that would be rejected
+(validation, a conflicting field owner, a webhook or Pod Security Admission) shows up as `Failed`
+in the preview. It does not show what defaulting or mutating webhooks would add or change on top of
+the tool's values; the object actually stored can differ from the preview in those fields.
 
 ### Undo (bonus — approach)
 
@@ -322,36 +378,48 @@ single place so the two features cannot drift apart.
 
 ---
 
-## 6. Planned layout
+## 6. Layout
 
 ```
 tyk-sre/
 ├── cmd/
-│   └── tyk-sre/           # entrypoint: config, manager, controller + API server wiring, signals
+│   └── tyk-sre/
+│       └── main.go             # flags, manager, Isolation controller and hardening API wiring
 ├── api/
-│   └── v1alpha1/          # Isolation CRD Go types (controller-gen markers, generated deepcopy)
+│   └── v1alpha1/               # Isolation CRD Go types (controller-gen markers, generated deepcopy)
 ├── internal/
-│   ├── isolation/         # policy builder (pure), safety checks, Isolation controller
-│   ├── hardening/         # hardening policy, planner (pure), workload discovery, apply/dry-run
-│   ├── guard/             # protected namespaces and opt-out label, shared by both features
-│   └── httpapi/           # hardening HTTP handlers and server
+│   ├── isolation/
+│   │   ├── policy.go           # builds the NetworkPolicies for an Isolation (pure)
+│   │   ├── safety.go           # checks run before a containment is applied (pure)
+│   │   └── controller.go       # Isolation reconciler
+│   ├── hardening/
+│   │   ├── policy.go           # planner and resource defaults (pure)
+│   │   ├── security.go         # security context rules (pure)
+│   │   ├── workload.go         # Deployment/StatefulSet/DaemonSet adapters, apply configurations
+│   │   └── hardener.go         # per-namespace discovery, Server-Side Apply, retries, results
+│   ├── guard/                  # protected namespaces and opt-out label, shared by both features
+│   └── httpapi/                # POST /hardening handler and HTTP server
 ├── deploy/
-│   ├── crd/               # Isolation CRD (generated), shipped separately from the tool
-│   └── tool/              # manifests to deploy the tool: RBAC, Deployment, Service (kustomize)
-├── lab/                   # kind config and sample workloads for the demo
-├── scripts/               # lab set-up and isolation verification scripts
-├── test/
-│   └── e2e/               # integration tests against kind (bonus)
-├── docs/                  # the original brief
+│   ├── crd/                    # Isolation CRD (generated), shipped separately from the tool
+│   └── tool/                   # Namespace, RBAC, Deployment, Service (kustomize)
+├── lab/
+│   ├── kind.yaml               # kind cluster config
+│   ├── isolation-sample.yaml   # sample Isolation
+│   ├── workloads/              # sample workloads for isolation and hardening
+│   └── demo/run.sh             # isolation demo: connectivity checks before and after
+├── docs/                       # the original brief
 ├── Dockerfile
 ├── Makefile
 ├── go.mod
 └── README.md
 ```
 
-The decision logic (policy builder, safety checks, hardening planner) is written as pure functions,
-so most of the tests run without a cluster or fakes; only the layer that talks to the API
-server uses the `controller-runtime` fake client.
+The decision logic (isolation policy builder, safety checks, hardening planner and security
+rules) is written as pure functions, so most of the tests run without a cluster or fakes; only
+the layers that talk to the API server (the Isolation controller and the hardener) use the
+`controller-runtime` fake client, and the HTTP handler is tested against a fake hardener.
+
+Not built: end-to-end tests against kind, and a scripted verification for hardening.
 
 ### Libraries
 
@@ -363,7 +431,37 @@ server uses the `controller-runtime` fake client.
 
 ---
 
-## 7. Feedback on the brief
+## 7. What to iterate with more time
+
+### Controlled rollout
+
+Section 4 describes patching workloads one at a time and watching each rollout. **This is not
+built.** Today, `POST /hardening` applies every workload in every requested namespace back to back,
+and the response comes back as soon as the API server has accepted the changes:
+
+- Each patch changes the pod template, so every patched Deployment, StatefulSet and DaemonSet starts
+  a rolling update at the same moment.
+- A setting that breaks a workload (e.g. a memory limit too low for it) breaks every workload it
+  applies to at once, not just the first one.
+- `Patched` means the API server accepted the change, not that the new pods started. A rollout that
+  gets stuck in `CrashLoopBackOff` or `OOMKilled` does not show up in the response.
+
+The workload controllers' rolling-update settings (`maxUnavailable`, `maxSurge`) still apply, so a
+workload with several replicas keeps serving while its own new pods fail. A single-replica workload
+or a DaemonSet with `maxUnavailable: 100%` does not.
+
+With more time:
+
+1. **Patch one workload at a time** and wait for its rollout before the next one: the controller has
+   seen the change (`status.observedGeneration`), every replica is updated and ready, and, for a
+   Deployment, the `Progressing` condition has not hit its `progressDeadlineSeconds`.
+2. **Stop on the first rollout that fails to progress**, report it as `Failed` with the reason, and
+   report the remaining workloads as not attempted. With undo, roll the failed one back.
+3. **Make the request asynchronous.** Waiting for rollouts can take minutes per workload, longer than
+   an HTTP request should stay open. `POST /hardening` would return a job ID, and a
+   `GET /hardening/{id}` would report progress per workload.
+
+## 8. Feedback on the brief
 
 1. **GitOps-managed workloads** are not mentioned. In most real clusters they are the norm
    and would revert the tool's patches.

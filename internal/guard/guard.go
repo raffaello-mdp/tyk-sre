@@ -37,3 +37,8 @@ func (g Guard) IsNamespaceProtected(name string, labels map[string]string) bool 
 	_, protected := g.protected[name]
 	return protected || labels[OptOutLabel] == "true"
 }
+
+// IsWorkloadOptedOut reports whether a workload with the given labels has opted out.
+func IsWorkloadOptedOut(labels map[string]string) bool {
+	return labels[OptOutLabel] == "true"
+}
