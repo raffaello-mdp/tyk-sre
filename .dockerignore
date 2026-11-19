@@ -1,0 +1,7 @@
+# Only the sources needed by the build reach the Docker daemon.
+*
+!go.mod
+!go.sum
+!api/
+!cmd/
+!internal/

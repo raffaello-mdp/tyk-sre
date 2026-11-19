@@ -42,3 +42,13 @@ lab-up:
 .PHONY: lab-down
 lab-down: ## Delete the kind cluster.
 	kind delete cluster --name "$(CLUSTER)"
+
+.PHONY: init-demo
+init-demo:
+	kubectl config use-context kind-sre-lab
+	kubectl apply --server-side -f deploy/crd/sre.tyk.io_isolations.yaml
+	kubectl wait --for=condition=Established crd/isolations.sre.tyk.io
+	docker build -t tyk-sre:dev .
+	kind load docker-image tyk-sre:dev --name sre-lab
+	kubectl apply -k deploy/tool
+	kubectl -n tyk-sre rollout status deployment/tyk-sre
