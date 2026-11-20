@@ -1,5 +1,31 @@
 # tyk-sre — SRE automations for Kubernetes
 
+## Running the demo
+```bash
+# start the kind cluster and install dependencies
+# Expected duration (depends on hardware and networking): ~10m
+make lab-up
+
+# init the demo deploying the sample workloads. 
+# Expected duration (depends on hardware): ~1m
+make demo-init
+
+# Run the isolation demo
+make demo-isolation
+
+# Run the hardening demo
+# Expected duration (depends on hardware): ~5s
+make demo-hardening
+
+# In case you want to re run the hardening demo, re init the demo
+# make demo-init
+# make demo-hardening
+
+# Tier Down the lab
+make lab-down
+```
+---
+
 > **Status: in progress.** This README holds the analysis and the decisions taken
 > so far. Build/deploy/run instructions, test notes and limitations will be filled in as while working on the implementation.
 
@@ -350,7 +376,7 @@ the tool's values; the object actually stored can differ from the preview in tho
 
 ### Undo (bonus — approach)
 
-TBD
+See [Hardener Undo](#hardener-undo).
 
 ### GitOps caveat
 
@@ -389,12 +415,12 @@ tyk-sre/
 │   └── v1alpha1/               # Isolation CRD Go types (controller-gen markers, generated deepcopy)
 ├── internal/
 │   ├── isolation/
-│   │   ├── policy.go           # builds the NetworkPolicies for an Isolation (pure)
-│   │   ├── safety.go           # checks run before a containment is applied (pure)
+│   │   ├── policy.go           # builds the CiliumClusterwideNetworkPolicy for an Isolation
+│   │   ├── safety.go           # checks run before a containment is applied
 │   │   └── controller.go       # Isolation reconciler
 │   ├── hardening/
-│   │   ├── policy.go           # planner and resource defaults (pure)
-│   │   ├── security.go         # security context rules (pure)
+│   │   ├── policy.go           # planner and resource defaults
+│   │   ├── security.go         # security context rules
 │   │   ├── workload.go         # Deployment/StatefulSet/DaemonSet adapters, apply configurations
 │   │   └── hardener.go         # per-namespace discovery, Server-Side Apply, retries, results
 │   ├── guard/                  # protected namespaces and opt-out label, shared by both features
@@ -405,8 +431,13 @@ tyk-sre/
 ├── lab/
 │   ├── kind.yaml               # kind cluster config
 │   ├── isolation-sample.yaml   # sample Isolation
-│   ├── workloads/              # sample workloads for isolation and hardening
-│   └── demo/run.sh             # isolation demo: connectivity checks before and after
+│   ├── workloads/
+│   │   ├── isolation.yaml      # tenant-a, tenant-b, shared, and the dashboard's tenant policy
+│   │   └── hardening.yaml      # hardening-a, hardening-b: one workload per hardening case
+│   └── demo/
+│       ├── isolation.sh        # isolation demo: connectivity checks before, during and after
+│       ├── long-lived-connection.sh  # run in a pod by isolation.sh: one connection kept open
+│       └── hardening.sh        # hardening demo: dry run, apply, rollouts, idempotent re-run
 ├── docs/                       # the original brief
 ├── Dockerfile
 ├── Makefile
@@ -435,33 +466,69 @@ Not built: end-to-end tests against kind, and a scripted verification for harden
 
 ### Controlled rollout
 
-Section 4 describes patching workloads one at a time and watching each rollout. **This is not
-built.** Today, `POST /hardening` applies every workload in every requested namespace back to back,
-and the response comes back as soon as the API server has accepted the changes:
-
-- Each patch changes the pod template, so every patched Deployment, StatefulSet and DaemonSet starts
-  a rolling update at the same moment.
-- A setting that breaks a workload (e.g. a memory limit too low for it) breaks every workload it
-  applies to at once, not just the first one.
-- `Patched` means the API server accepted the change, not that the new pods started. A rollout that
-  gets stuck in `CrashLoopBackOff` or `OOMKilled` does not show up in the response.
-
+The plan was to patch workloads one at a time and watching each rollout. **This is not
+built.** Today, `POST /hardening` applies every workload in every requested namespace,
+and the response comes back as soon as the API server has accepted the changes.
+Because each patch changes the pod template, every patched Deployment, StatefulSet and DaemonSet starts
+a rolling update at the same moment.
 The workload controllers' rolling-update settings (`maxUnavailable`, `maxSurge`) still apply, so a
 workload with several replicas keeps serving while its own new pods fail. A single-replica workload
 or a DaemonSet with `maxUnavailable: 100%` does not.
 
 With more time:
+1. Configure the the resources using either a configuration mechanism or, even better, relying on the p99
+   (plus buffer) of the metrics used on a rolling Xdays window.
+2. Patch one workload at a time and wait for its rollout before the next one, every replica is updated and
+   ready.
+3. Adding a wait for the rollouts changes the behaviour of the requests, which, can take minutes per 
+   workload. `POST /hardening` might return a job ID, and a `GET /hardening/{id}` would report progress per workload.
 
-1. **Patch one workload at a time** and wait for its rollout before the next one: the controller has
-   seen the change (`status.observedGeneration`), every replica is updated and ready, and, for a
-   Deployment, the `Progressing` condition has not hit its `progressDeadlineSeconds`.
-2. **Stop on the first rollout that fails to progress**, report it as `Failed` with the reason, and
-   report the remaining workloads as not attempted. With undo, roll the failed one back.
-3. **Make the request asynchronous.** Waiting for rollouts can take minutes per workload, longer than
-   an HTTP request should stay open. `POST /hardening` would return a job ID, and a
-   `GET /hardening/{id}` would report progress per workload.
+### Expose metrics
+The current implementation does not expose metrics. To be production-ready I would expose metrics, alerts, and a Grafana dashboard to visualise the behaviour of the two features.
 
-## 8. Feedback on the brief
+#### For the the controller I would need to monitor:
+- The ratio of succeeded changes over valid changes over time. Valid changes are the ones that are not excluded by the [guard](internal/guard/guard.go).
+- The reconciliation time. The duration between the moment the event is received and when the Cilium policy is created.
+- The isolation correctnes, how many policies cannot be applied because are blocked by the [safety tier](internal/isolation/safety.go). 
 
-1. **GitOps-managed workloads** are not mentioned. In most real clusters they are the norm
-   and would revert the tool's patches.
+#### For the the hardener I would need to monitor:
+- To know how the hardener behaves I would expose metrics on the result to track the status of the outcome for a namespace or a workload.
+- As per the controller, to know the actual ratio of "Patched" reseources vs. valid events, I would need to know the count of resources excluded by the [guard](internal/guard/guard.go).
+
+### Hardener Undo
+The hardener patches the template of the monitored resources (Deployments, StatefulSets and DaemonSets).
+To undo the changes, the hardener would expose **POST** `/hardening/undo`, using the same guard and the same dry-run support.
+To revert, the hardener does not require any persisted state. For each workload, the hardener sends an empty server-side apply under its field manager, `tyk-sre-hardening`, and the API server removes every field that manager owns and does not share. Fields that another manager has since changed or co-owns are kept, with their current value.
+
+This is based on three assumptions:
+- The hardener only adds missing fields and never changes an existing value.
+- The hardener manager name does not change over time or releases.
+- Each run applies the fields owned from earlier runs plus the new ones, so a later run does not give up earlier fields. 
+
+In case the object is changed by something/someone else:
+- patch, edit, client-side or forced server-side apply moves ownership, undo keeps their value.
+- managedFields cleared or the object replaced: the ownership record is lost and undo removes nothing.
+
+Undo changes the pod template, so it triggers a rollout of every workload it touches (see [Controlled rollout](#controlled-rollout)).
+
+Alternatives:
+We could store the pre-patch values in an annotation and restore them. This solution is weak as: - Restoring would overwrite anything changed since hardening
+- If the annotations are patched by a different manager or person, the undo would not restore the correct state.
+
+## 8. Tricky or easy to get wrong scenarios
+The code covers unit tests, not integration tests. I used the lab demo script to cover the integrations scenarios. Even though it does not allow to automatically test in a CD pipeline, I believe it's enough for the purpose of this lab/demo.
+
+### Isolation
+I believe that the trickiest scenario to prove is the interruption of an existing open connection.
+In case there is a security incident and we want to interrupt the networking between namespaces, the active connections are the one we want to target first, before even thinking of new possible connections.
+The isolation script instantiate a long lived connection between two workloads and it proves that once the isolation is created, this connection is interrupted.
+The prove is in the line `[LLC] - tenant-a/gateway -> tenant-b/dashboard:8080, opened before the isolation: Blocked (request 3: no response)`.
+
+### Hardener
+For the hardener I don't see a tricky scenario, but I do see a couple of easy-to-get-wrong ones. 
+1. When setting resources, the tool could set the CPU limits, possibly causing a CPU throttling issue. Potentially, making apps slower
+2. If the requests are not set and the limits are. Setting the requests would change the QoS class (Quality of Service) transforming a pod from Guaranteed to Burstable. Increasing the chance of eviction.
+3. Changing configurations in the SecurityContext could cause an rollout failure.
+
+  
+## 9. Feedback on the brief
