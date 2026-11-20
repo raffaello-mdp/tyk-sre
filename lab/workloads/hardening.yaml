@@ -6,9 +6,15 @@
 #   hardening-a/partial         some values already set; they must never be overridden
 #   hardening-a/hardened        already compliant; must produce no change
 #   hardening-a/opted-out       carries the opt-out label; must be skipped
+#   hardening-a/guaranteed      limits only, so requests default to them (Guaranteed QoS); no request may be added
+#   hardening-a/privileged      privileged container; its securityContext must be left alone
+#   hardening-a/sys-admin       adds CAP_SYS_ADMIN, which allowPrivilegeEscalation: false cannot be combined with
 #   hardening-a/standalone      bare Pod; out of scope
 #   hardening-b/redis           StatefulSet; its entrypoint starts as root and changes user
 #   hardening-b/node-agent      DaemonSet; nothing set
+#
+# Workloads with a server have a readiness probe, so a completed rollout means
+# the new pods actually serve, not just that their containers started.
 ---
 apiVersion: v1
 kind: Namespace
@@ -32,6 +38,7 @@ spec:
           image: registry.k8s.io/e2e-test-images/agnhost:2.53
           args: ["netexec", "--http-port=8080"]
           ports: [{ containerPort: 8080 }]
+          readinessProbe: { tcpSocket: { port: 8080 }, periodSeconds: 2 }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -46,6 +53,7 @@ spec:
         - name: app
           image: nginx:1.27
           ports: [{ containerPort: 80 }]
+          readinessProbe: { tcpSocket: { port: 80 }, periodSeconds: 2 }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -67,6 +75,7 @@ spec:
           image: registry.k8s.io/e2e-test-images/agnhost:2.53
           args: ["netexec", "--http-port=8080"]
           ports: [{ containerPort: 8080 }]
+          readinessProbe: { tcpSocket: { port: 8080 }, periodSeconds: 2 }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -82,6 +91,7 @@ spec:
           image: registry.k8s.io/e2e-test-images/agnhost:2.53
           args: ["netexec", "--http-port=8080"]
           ports: [{ containerPort: 8080 }]
+          readinessProbe: { tcpSocket: { port: 8080 }, periodSeconds: 2 }
           resources:
             requests: { memory: 32Mi }
             limits: { cpu: 500m, memory: 128Mi }
@@ -108,6 +118,7 @@ spec:
           image: registry.k8s.io/e2e-test-images/agnhost:2.53
           args: ["netexec", "--http-port=8080"]
           ports: [{ containerPort: 8080 }]
+          readinessProbe: { tcpSocket: { port: 8080 }, periodSeconds: 2 }
           resources:
             requests: { cpu: 10m, memory: 32Mi }
             limits: { memory: 128Mi }
@@ -133,6 +144,62 @@ spec:
           image: registry.k8s.io/e2e-test-images/agnhost:2.53
           args: ["netexec", "--http-port=8080"]
           ports: [{ containerPort: 8080 }]
+          readinessProbe: { tcpSocket: { port: 8080 }, periodSeconds: 2 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: guaranteed, namespace: hardening-a }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: guaranteed } }
+  template:
+    metadata: { labels: { app: guaranteed } }
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["netexec", "--http-port=8080"]
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { tcpSocket: { port: 8080 }, periodSeconds: 2 }
+          resources:
+            limits: { cpu: 100m, memory: 64Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: privileged, namespace: hardening-a }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: privileged } }
+  template:
+    metadata: { labels: { app: privileged } }
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["netexec", "--http-port=8080"]
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { tcpSocket: { port: 8080 }, periodSeconds: 2 }
+          securityContext:
+            privileged: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sys-admin, namespace: hardening-a }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: sys-admin } }
+  template:
+    metadata: { labels: { app: sys-admin } }
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["netexec", "--http-port=8080"]
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { tcpSocket: { port: 8080 }, periodSeconds: 2 }
+          securityContext:
+            capabilities:
+              add: [CAP_SYS_ADMIN]
 ---
 apiVersion: v1
 kind: Pod
@@ -169,6 +236,7 @@ spec:
         - name: app
           image: redis:7.4
           ports: [{ containerPort: 6379 }]
+          readinessProbe: { tcpSocket: { port: 6379 }, periodSeconds: 2 }
 ---
 apiVersion: apps/v1
 kind: DaemonSet

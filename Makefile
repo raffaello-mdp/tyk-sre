@@ -43,8 +43,8 @@ lab-up:
 lab-down: ## Delete the kind cluster.
 	kind delete cluster --name "$(CLUSTER)"
 
-.PHONY: init-demo
-init-demo:
+.PHONY: demo-init
+demo-init:
 	kubectl config use-context kind-sre-lab
 	kubectl apply --server-side -f deploy/crd/sre.tyk.io_isolations.yaml
 	kubectl wait --for=condition=Established crd/isolations.sre.tyk.io
@@ -52,3 +52,18 @@ init-demo:
 	kind load docker-image tyk-sre:dev --name sre-lab
 	kubectl apply -k deploy/tool
 	kubectl -n tyk-sre rollout status deployment/tyk-sre
+	@# Force to Create/Recreate workloads
+	kubectl delete -f lab/workloads/hardening.yaml -f lab/workloads/isolation.yaml \
+		--ignore-not-found --force --grace-period=0 --wait
+	kubectl apply -f ./lab/workloads/
+	kubectl -n hardening-a wait --for=condition=Available deploy --all --timeout=300s
+	kubectl -n hardening-b rollout status statefulset/redis --timeout=300s
+	kubectl -n hardening-b rollout status daemonset/node-agent --timeout=300s
+
+.PHONY: demo-isolation
+demo-isolation:
+	@./lab/demo/isolation.sh
+
+.PHONY: demo-hardening
+demo-hardening:
+	@./lab/demo/hardening.sh

@@ -1,6 +1,3 @@
-# Isolates tenant-a/gateway from tenant-b/dashboard (see workloads/isolation.yaml).
-#   On:  kubectl apply -f lab/isolation-sample.yaml
-#   Off: kubectl delete -f lab/isolation-sample.yaml
 apiVersion: sre.tyk.io/v1alpha1
 kind: Isolation
 metadata:
