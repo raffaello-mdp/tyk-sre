@@ -38,7 +38,7 @@ func TestBuildPolicyDeniesBothDirectionsOnBothEnds(t *testing.T) {
 	}
 }
 
-// Without this setting, a deny-only policy puts the selected pods in default-deny
+// Tricky: Without this setting, a deny-only policy puts the selected pods in default-deny
 // and cuts all of their other traffic, which is what the brief forbids.
 func TestBuildPolicyKeepsOtherTrafficWorking(t *testing.T) {
 	for i, rule := range rules(t, BuildPolicy(isolation("inc"))) {
@@ -80,7 +80,7 @@ func TestEndpointSelectorScopesToNamespacesAndLabels(t *testing.T) {
 	}
 }
 
-// An empty selector must still be limited to the namespaces of the side: without
+// Tricky: An empty selector must still be limited to the namespaces of the side: without
 // the namespace expression it would match every pod in the cluster.
 func TestEndpointSelectorWithEmptySelectorStaysInItsNamespaces(t *testing.T) {
 	got := endpointSelector(v1alpha1.WorkloadSelector{Namespaces: []v1alpha1.NamespaceName{"tenant-a"}})

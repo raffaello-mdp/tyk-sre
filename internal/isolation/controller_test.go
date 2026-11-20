@@ -224,6 +224,8 @@ func TestReconcileRecreatesDeletedPolicy(t *testing.T) {
 	}
 }
 
+// Tricky: Delete-and-recreate is the natural way to apply a changed spec, and it opens a window in which the two sides can talk again.
+// Count deletes to prove the edit happens in a single write.
 func TestValidEditUpdatesPolicyInPlace(t *testing.T) {
 	deletes := 0
 	funcs := interceptor.Funcs{Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
@@ -264,7 +266,7 @@ func TestNewIsolationWithPodOnBothSidesIsRefused(t *testing.T) {
 	h.assertEnforced("inc", metav1.ConditionFalse, v1alpha1.ReasonPodsMatchBothSides)
 }
 
-// The tricky case of the controller: during an incident, a bad edit must not lift
+// Tricky: during an incident, a bad edit must not lift
 // the containment that is already in place.
 func TestUnsafeEditKeepsLastValidPolicy(t *testing.T) {
 	objects := append(workloadPods(), isolation("inc"),
@@ -419,6 +421,8 @@ func TestOverlappingIsolationsOwnSeparatePolicies(t *testing.T) {
 	}
 }
 
+// Tricky: Missing Cilium would crash-loop the tool and take the hardening API down.
+// Check that no watch starts and that a recheck is scheduled.
 func TestCiliumNotInstalledIsReportedAndRetried(t *testing.T) {
 	funcs := interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 		if obj.GetObjectKind().GroupVersionKind() == PolicyGVK {

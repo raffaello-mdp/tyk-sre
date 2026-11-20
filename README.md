@@ -516,7 +516,9 @@ We could store the pre-patch values in an annotation and restore them. This solu
 - If the annotations are patched by a different manager or person, the undo would not restore the correct state.
 
 ## 8. Tricky or easy to get wrong scenarios
-The code covers unit tests, not integration tests. I used the lab demo script to cover the integrations scenarios. Even though it does not allow to automatically test in a CD pipeline, I believe it's enough for the purpose of this lab/demo.
+The code covers unit tests, not integration tests. I'm not sure if by "exercise the behaviour" you mean integration tests against a real cluster.
+
+I used the lab demo script to cover the integrations scenarios. Even though it does not allow to automatically test in a CD pipeline, I believe it's enough for the purpose of this lab/demo.
 
 ### Isolation
 I believe that the trickiest scenario to prove is the interruption of an existing open connection.
