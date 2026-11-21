@@ -35,7 +35,7 @@ type config struct {
 
 func main() {
 	cfg := config{}
-	flag.StringVar(&cfg.apiAddr, "api-bind-address", ":8080", "Address serving the hardening API.")
+	flag.StringVar(&cfg.apiAddr, "api-bind-address", "127.0.0.1:8080", "Address serving the hardening API.")
 	flag.StringVar(&cfg.healthProbeAddr, "health-probe-bind-address", ":8081", "Address serving /healthz and /readyz.")
 	flag.StringVar(&cfg.metricsAddr, "metrics-bind-address", "0", `Address serving metrics, "0" disables them.`)
 	flag.StringVar(&cfg.namespace, "namespace", namespaceFromEnv(), "Namespace of the tool, which it never acts on.")

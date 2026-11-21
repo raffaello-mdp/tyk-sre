@@ -84,6 +84,7 @@ echo "🏝️  Create an Isolation between tenant-a/gateway -> tenant-b/dashboar
 
 requests_before_isolation=$(wc -l < "$CONNECTION_LOG")
 kubectl apply -f lab/isolation-sample.yaml
+kubectl wait isolation/inc-1234 --for=condition=Enforced --timeout=30s
 kubectl get isolations
 kubectl get ciliumclusterwidenetworkpolicies
 
@@ -98,6 +99,7 @@ kill "$CONNECTION_PID" 2>/dev/null
 echo ""
 echo "✨ Self-healing: after removing the cilium policy, it comes back within seconds"
 kubectl delete ciliumclusterwidenetworkpolicy isolation-inc-1234
+kubectl wait --for=create ciliumclusterwidenetworkpolicy/isolation-inc-1234 --timeout=30s
 
 echo "✨ Running checks:"
 echo "- expecting cilium policy to be listed"
@@ -107,6 +109,7 @@ echo ""
 echo "‼️  Unsafe edit: overlap side b and side a"
 kubectl patch isolation inc-1234 --type=json -p \
   '[{"op":"replace","path":"/spec/b","value":{"namespaces":["tenant-a"],"selector":{}}}]'
+kubectl wait isolation/inc-1234 --for=jsonpath='{.status.conditions[?(@.type=="Enforced")].reason}'=LastValidPolicyKept --timeout=30s
 
 echo "✨ Running checks:"
 echo "- expecting Isolation status to be LastValidPolicyKept. The controller should keep the previous version as this is not valid"
@@ -123,6 +126,7 @@ echo "- expecting Isolation status to be PolicyApplied. The controller should ap
 echo ""
 
 kubectl apply -f lab/isolation-sample.yaml
+kubectl wait isolation/inc-1234 --for=jsonpath='{.status.conditions[?(@.type=="Enforced")].reason}'=PolicyApplied --timeout=30s
 kubectl get isolations
 
 echo ""
@@ -132,7 +136,18 @@ echo "- expecting only tenant-b/not-isolated -> tenant-b/dashboard to be blocked
 echo ""
 
 kubectl -n tyk-sre scale deployment/tyk-sre --replicas=0
+
+for _ in $(seq 60); do
+  [ -z "$(kubectl -n tyk-sre get pods -l app.kubernetes.io/name=tyk-sre -o name)" ] && break
+  sleep 1
+done
+if [ -n "$(kubectl -n tyk-sre get pods -l app.kubernetes.io/name=tyk-sre -o name)" ]; then
+  echo "the tool pod is still running after 60s: the checks below would not prove anything"
+  exit 1
+fi
+
 kubectl delete isolation inc-1234
+kubectl wait --for=delete ciliumclusterwidenetworkpolicy/isolation-inc-1234 --timeout=60s
 kubectl get ciliumclusterwidenetworkpolicies
 echo "✨ Running checks:"
 check
@@ -150,4 +165,5 @@ echo "- expecting the Cilium policy to be recreated"
 
 kubectl -n tyk-sre scale deployment/tyk-sre --replicas=1
 kubectl -n tyk-sre rollout status deployment/tyk-sre --timeout=120s
+kubectl wait --for=create ciliumclusterwidenetworkpolicy/isolation-inc-1234 --timeout=60s
 kubectl get ciliumclusterwidenetworkpolicies
