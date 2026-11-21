@@ -1,0 +1,32 @@
+# The Isolation CRD is not part of this chart: uninstalling the tool must not
+# delete the CRD, which would delete every Isolation and lift every active
+# containment. Install it separately:
+#   kubectl apply --server-side -f deploy/crd/sre.tyk.io_isolations.yaml
+
+# The tool is deployed to the release namespace: helm install --namespace <ns>.
+
+image:
+  repository: tyk-sre
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# debug, info or error.
+logLevel: info
+
+# Prometheus metrics, served over plain HTTP on /metrics.
+# Disabled means the tool does not open the port at all.
+metrics:
+  enabled: true
+  port: 8082
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
