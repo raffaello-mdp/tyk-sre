@@ -26,6 +26,11 @@ make lab-down
 ```
 ---
 
+## Running the Tests
+```bash
+maket test
+```
+
 A Go service, deployed in-cluster, that lets an SRE:
 
 1. **Isolate** two workloads from each other on demand (and lift the isolation), without
@@ -555,3 +560,5 @@ For the hardener I don't see a tricky scenario, but I do see a couple of easy-to
   
 ## 9. Feedback on the brief
 1. In the brief is not clear what "exercise the behaviour" means. Is it automated integration tests against a real cluster?
+
+2. About time, It's not clear if the statement "if you reach the time limit, ..." refers to the 4-6 hours or to the 5 days.
